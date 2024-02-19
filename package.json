@@ -2,7 +2,9 @@
   "name": "@rest-api-private-integration-to-ecs/source",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "gql": "nx serve graphql"
+  },
   "private": true,
   "devDependencies": {
     "@nestjs/schematics": "^10.0.1",
@@ -11,7 +13,7 @@
     "@nx/eslint-plugin": "18.0.4",
     "@nx/jest": "18.0.4",
     "@nx/js": "18.0.4",
-    "@nx/nest": "^18.0.4",
+    "@nx/nest": "18.0.4",
     "@nx/node": "18.0.4",
     "@nx/web": "18.0.4",
     "@nx/webpack": "18.0.4",
@@ -48,3 +50,4 @@
     "tslib": "^2.3.0"
   }
 }
+
