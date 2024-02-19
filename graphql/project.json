@@ -1,0 +1,24 @@
+{
+  "name": "graphql",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "graphql/src",
+  "projectType": "application",
+  "targets": {
+    "serve": {
+      "executor": "@nx/js:node",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "graphql:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "graphql:build:development"
+        },
+        "production": {
+          "buildTarget": "graphql:build:production"
+        }
+      }
+    }
+  },
+  "tags": []
+}
