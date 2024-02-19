@@ -1,0 +1,16 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type Car {
+  id: Float!
+  make: String!
+  model: String!
+  year: Float!
+  price: String!
+}
+
+type Query {
+  car(id: Float!): Car!
+  cars: [Car!]!
+}
