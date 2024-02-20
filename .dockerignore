@@ -1,0 +1,4 @@
+.vscode
+.nx
+node_modules
+dist
