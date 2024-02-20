@@ -2869,7 +2869,7 @@
     docker-classic "npm:@pulumi/docker@3.6.1"
     mime "^2.0.0"
 
-"@pulumi/docker@^4.5.0":
+"@pulumi/docker@^4.5.0", "@pulumi/docker@^4.5.1":
   version "4.5.1"
   resolved "https://registry.yarnpkg.com/@pulumi/docker/-/docker-4.5.1.tgz#9058851bebbb358a1081c765d928fd6791c6c7ba"
   integrity sha512-2BTFycFLwSpHGQ4IFTsUHl8H5w81AgkrMHSLUQ8Zu6HBDgGhB5up6YsxVqLeaUeWAedEUrrSCY3xTCNbP4a0ag==
