@@ -9,7 +9,6 @@ const vpc = new aws.ec2.Vpc('my-custom-vpc', {
     Name: 'my-custom-vpc',
   },
 });
-
 // Create an Internet Gateway and attach it to the VPC
 const internetGateway = new aws.ec2.InternetGateway('my-internet-gateway', {
   vpcId: vpc.id,
@@ -17,7 +16,6 @@ const internetGateway = new aws.ec2.InternetGateway('my-internet-gateway', {
     Name: 'my-internet-gateway',
   },
 });
-
 // Create the two public subnets and routing table rules
 const publicSubnetOne = new aws.ec2.Subnet('public-subnet-1', {
   vpcId: vpc.id,
@@ -68,7 +66,6 @@ const publicSubnetTwo = new aws.ec2.Subnet('public-subnet-2', {
     }
   );
 });
-
 // Create two NAT Gateways each in a public subnet with an allocated Elastic IP
 const natGatewayOneElasticIp = new aws.ec2.Eip(
   'public-subnet-1-nat-gateway-eip',
@@ -164,58 +161,86 @@ const publicNatGateways: aws.ec2.NatGateway[] = [
   );
 });
 
-const albAllowAllIpTrafficSecurityGroup = new aws.ec2.SecurityGroup(
-  'alb-all-traffic-sg',
-  {
-    vpcId: vpc.id,
-    ingress: [
-      {
-        protocol: 'TCP',
-        fromPort: 80,
-        toPort: 80,
-        cidrBlocks: ['0.0.0.0/0'],
-      },
-    ],
-    egress: [
-      {
-        protocol: '-1',
-        fromPort: 0,
-        toPort: 0,
-        cidrBlocks: ['0.0.0.0/0'],
-      },
-    ],
-  }
-);
-const restApiAlb = new aws.lb.LoadBalancer('rest-api-lb', {
-  internal: false,
-  loadBalancerType: 'application',
-  ipAddressType: 'ipv4',
-  securityGroups: [albAllowAllIpTrafficSecurityGroup.id],
-  subnets: [publicSubnetOne.id, publicSubnetTwo.id],
+// Create the security groups for the network and application load balancer
+const nlbSecurityGroup = new aws.ec2.SecurityGroup('nlb-security-group', {
+  description: 'Allow all traffic for the nlb',
+  vpcId: vpc.id,
+  ingress: [
+    {
+      fromPort: 80,
+      toPort: 80,
+      protocol: 'tcp',
+      cidrBlocks: ['0.0.0.0/0'],
+    },
+  ],
+  egress: [
+    { protocol: '-1', fromPort: 0, toPort: 0, cidrBlocks: ['0.0.0.0/0'] },
+  ],
+});
+const albSecurityGroup = new aws.ec2.SecurityGroup('alb-security-group', {
+  description: 'Allow subnet level and nlb traffic for the alb',
+  vpcId: vpc.id,
+  ingress: [
+    {
+      // local traffic within the subnet
+      fromPort: 80,
+      toPort: 80,
+      protocol: 'TCP',
+      cidrBlocks: [vpc.cidrBlock],
+    },
+    {
+      // traffic from the network load balancer
+      fromPort: 80,
+      toPort: 80,
+      protocol: 'TCP',
+      securityGroups: [nlbSecurityGroup.id],
+    },
+  ],
+  egress: [
+    { protocol: '-1', fromPort: 0, toPort: 0, cidrBlocks: ['0.0.0.0/0'] },
+  ],
 });
 
-// Target group for ECS tasks
-const imagePort = 80;
-const albEcsClusterTargetGroup = new aws.lb.TargetGroup(
-  'alb-ecs-cluster-target',
+// Create application load balancer and port 80 listener
+const restApiAlb = new aws.lb.LoadBalancer('rest-api-alb', {
+  loadBalancerType: 'application',
+  internal: true,
+  subnets: [privateSubnetOne.id, privateSubnetTwo.id],
+  securityGroups: [albSecurityGroup.id],
+});
+const defaultAlbTargetGroup = new aws.lb.TargetGroup(
+  'default-alb-target-group',
   {
     vpcId: vpc.id,
     protocol: 'HTTP',
-    port: imagePort,
+    port: 80,
     targetType: 'ip',
   }
 );
-
-// Listener for the ALB to route incoming traffic to the target group
-const albListener = new aws.lb.Listener('alb-http-listener', {
-  loadBalancerArn: restApiAlb.arn,
+new aws.lb.Listener('alb-listener', {
   port: 80,
+  protocol: 'HTTP',
+  loadBalancerArn: restApiAlb.arn,
   defaultActions: [
     {
       type: 'forward',
-      targetGroupArn: albEcsClusterTargetGroup.arn,
+      targetGroupArn: defaultAlbTargetGroup.arn,
     },
   ],
+});
+
+// Create an application load balancer target group and attachment which allows
+// the network load balancer to route tcp traffic to the application load balancer.
+const albNlbTargetGroup = new aws.lb.TargetGroup('alb-nlb-target-group', {
+  vpcId: vpc.id,
+  protocol: 'TCP',
+  port: 80,
+  targetType: 'alb',
+});
+new aws.lb.TargetGroupAttachment('alb-nlb-target-group-attachment', {
+  targetGroupArn: albNlbTargetGroup.arn,
+  targetId: restApiAlb.id,
+  port: 80,
 });
 
 const restApiCluster = new aws.ecs.Cluster('rest-api-cluster');
@@ -229,21 +254,20 @@ const restApiImage = new awsx.ecr.Image('rest-api-image', {
   platform: 'linux/amd64',
   args: {
     NODE_ENV: 'production',
-    PORT: `${imagePort}`,
+    PORT: '80',
     BUILD_FLAG: '--production',
   },
 });
-
 new awsx.ecs.FargateService('rest-api-fargate-service', {
   cluster: restApiCluster.arn,
   desiredCount: 2,
   networkConfiguration: {
     subnets: [privateSubnetOne.id, privateSubnetTwo.id],
-    securityGroups: [albAllowAllIpTrafficSecurityGroup.id],
+    securityGroups: [albSecurityGroup.id],
   },
   loadBalancers: [
     {
-      targetGroupArn: albEcsClusterTargetGroup.arn,
+      targetGroupArn: defaultAlbTargetGroup.arn,
       containerName: 'api',
       containerPort: 80,
     },
@@ -255,10 +279,10 @@ new awsx.ecs.FargateService('rest-api-fargate-service', {
       cpu: 128,
       memory: 512,
       essential: true,
-      environment: [{ name: 'PORT', value: `${imagePort}` }],
+      environment: [{ name: 'PORT', value: '80' }],
       portMappings: [
         {
-          containerPort: imagePort,
+          containerPort: 80,
           protocol: 'TCP',
         },
       ],
@@ -266,4 +290,23 @@ new awsx.ecs.FargateService('rest-api-fargate-service', {
   },
 });
 
-export const URL = pulumi.interpolate`http://${restApiAlb.dnsName}`;
+const restApiNlb = new aws.lb.LoadBalancer('rest-api-nlb', {
+  internal: false,
+  loadBalancerType: 'network',
+  securityGroups: [nlbSecurityGroup.id],
+  subnets: [publicSubnetOne.id, publicSubnetTwo.id],
+});
+
+new aws.lb.Listener('nlb-listener', {
+  port: 80,
+  protocol: 'TCP',
+  loadBalancerArn: restApiNlb.arn,
+  defaultActions: [
+    {
+      type: 'forward',
+      targetGroupArn: albNlbTargetGroup.arn,
+    },
+  ],
+});
+
+export const NlbURL = pulumi.interpolate`http://${restApiNlb.dnsName}`;
