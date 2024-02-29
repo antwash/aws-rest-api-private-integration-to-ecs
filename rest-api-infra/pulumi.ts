@@ -163,14 +163,21 @@ const publicNatGateways: aws.ec2.NatGateway[] = [
 
 // Create the security groups for the network and application load balancer
 const nlbSecurityGroup = new aws.ec2.SecurityGroup('nlb-security-group', {
-  description: 'Allow all traffic for the nlb',
+  description: 'Allow subnet level traffic for the nlb',
   vpcId: vpc.id,
   ingress: [
+    // {
+    //   fromPort: 80,
+    //   toPort: 80,
+    //   protocol: 'tcp',
+    //   cidrBlocks: ['0.0.0.0/0'],
+    // },
     {
+      // local traffic within the subnet
       fromPort: 80,
       toPort: 80,
-      protocol: 'tcp',
-      cidrBlocks: ['0.0.0.0/0'],
+      protocol: 'TCP',
+      cidrBlocks: [vpc.cidrBlock],
     },
   ],
   egress: [
@@ -291,10 +298,11 @@ new awsx.ecs.FargateService('rest-api-fargate-service', {
 });
 
 const restApiNlb = new aws.lb.LoadBalancer('rest-api-nlb', {
-  internal: false,
+  internal: true,
   loadBalancerType: 'network',
   securityGroups: [nlbSecurityGroup.id],
-  subnets: [publicSubnetOne.id, publicSubnetTwo.id],
+  enableCrossZoneLoadBalancing: true,
+  subnets: [privateSubnetOne.id, privateSubnetTwo.id],
 });
 
 new aws.lb.Listener('nlb-listener', {
