@@ -1,6 +1,7 @@
 import * as awsx from '@pulumi/awsx';
 import * as aws from '@pulumi/aws';
 import * as pulumi from '@pulumi/pulumi';
+import * as crypto from 'crypto';
 
 // Create a VPC with a custom CIDR block range
 const vpc = new aws.ec2.Vpc('my-custom-vpc', {
@@ -166,12 +167,6 @@ const nlbSecurityGroup = new aws.ec2.SecurityGroup('nlb-security-group', {
   description: 'Allow subnet level traffic for the nlb',
   vpcId: vpc.id,
   ingress: [
-    // {
-    //   fromPort: 80,
-    //   toPort: 80,
-    //   protocol: 'tcp',
-    //   cidrBlocks: ['0.0.0.0/0'],
-    // },
     {
       // local traffic within the subnet
       fromPort: 80,
@@ -302,6 +297,7 @@ const restApiNlb = new aws.lb.LoadBalancer('rest-api-nlb', {
   loadBalancerType: 'network',
   securityGroups: [nlbSecurityGroup.id],
   enableCrossZoneLoadBalancing: true,
+  enforceSecurityGroupInboundRulesOnPrivateLinkTraffic: 'off',
   subnets: [privateSubnetOne.id, privateSubnetTwo.id],
 });
 
@@ -317,4 +313,80 @@ new aws.lb.Listener('nlb-listener', {
   ],
 });
 
-export const NlbURL = pulumi.interpolate`http://${restApiNlb.dnsName}`;
+// Create the VPC link that enables the private integration for API Gateway
+const vpcLink = new aws.apigateway.VpcLink('rest-api-vpc-link', {
+  name: 'api-gateway-to-nlb-vpc-link',
+  targetArn: restApiNlb.arn,
+});
+
+const restApi = new aws.apigateway.RestApi('rest-api');
+const restApiHealthResource = new aws.apigateway.Resource(
+  'api-health-resource',
+  {
+    parentId: restApi.rootResourceId,
+    pathPart: 'health',
+    restApi: restApi.id,
+  }
+);
+const healthResourceGetMethod = new aws.apigateway.Method(
+  'health-resource-get-method',
+  {
+    restApi: restApi.id,
+    resourceId: restApiHealthResource.id,
+    authorization: 'NONE',
+    httpMethod: 'GET',
+    apiKeyRequired: false,
+    requestParameters: {},
+  }
+);
+
+// Create an integration to connect the GET method to the NLB through the VPC Link
+const healthResourceIntegration = new aws.apigateway.Integration(
+  'health-resource-get-method-integration',
+  {
+    restApi: restApi.id,
+    resourceId: restApiHealthResource.id,
+    httpMethod: healthResourceGetMethod.httpMethod,
+    type: 'HTTP_PROXY',
+    connectionType: 'VPC_LINK',
+    connectionId: vpcLink.id,
+    integrationHttpMethod: healthResourceGetMethod.httpMethod,
+    uri: pulumi.interpolate`http://${restApiNlb.dnsName}`,
+  }
+);
+
+// Deploy the API
+const restApiDeployment = new aws.apigateway.Deployment('rest-api-deployment', {
+  restApi: restApi.id,
+  triggers: {
+    redeployment: pulumi
+      .all([
+        restApiHealthResource.id,
+        healthResourceGetMethod.id,
+        healthResourceIntegration.id,
+      ])
+      .apply(
+        ([
+          restApiHealthResourceId,
+          healthResourceGetMethodId,
+          healthResourceIntegrationId,
+        ]) =>
+          JSON.stringify([
+            restApiHealthResourceId,
+            healthResourceGetMethodId,
+            healthResourceIntegrationId,
+          ])
+      )
+      .apply((toJSON) =>
+        crypto.createHash('sha1').update(toJSON).digest('hex')
+      ),
+  },
+});
+const stage = new aws.apigateway.Stage('stage', {
+  deployment: restApiDeployment.id,
+  restApi: restApi.id,
+  stageName: 'stage',
+});
+
+export const invokeURL = pulumi.interpolate`${stage.invokeUrl}`;
+export const healthGetEndpoint = pulumi.interpolate`${invokeURL}/${restApiHealthResource.path}`;
