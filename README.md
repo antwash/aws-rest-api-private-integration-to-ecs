@@ -1,4 +1,4 @@
-# AWSRestApiPrivateIntegrationToEcs
+# REST API with AWS API Gateway private integration
 
 ## Summary
 More info coming soon...
